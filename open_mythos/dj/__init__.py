@@ -48,6 +48,15 @@ from open_mythos.dj.harmonic import (
     compatible_codes,
     to_camelot,
 )
+from open_mythos.dj.identify import (
+    AudDIdentifier,
+    AudioIdentifier,
+    CallableIdentifier,
+    assemble_setlist,
+    build_identifier,
+    scan_mix,
+    setlist_to_dict,
+)
 from open_mythos.dj.mixlang import (
     STRUCTURAL_TOKENS,
     build_training_corpus,
@@ -126,6 +135,14 @@ __all__ = [
     "setlist_from_json",
     "learn_profile_from_setlists",
     "setlists_to_corpus",
+    # audio recognition (mix -> tracklist)
+    "scan_mix",
+    "assemble_setlist",
+    "build_identifier",
+    "AudioIdentifier",
+    "AudDIdentifier",
+    "CallableIdentifier",
+    "setlist_to_dict",
     # metadata enrichment
     "enrich_tracks",
     "build_provider",

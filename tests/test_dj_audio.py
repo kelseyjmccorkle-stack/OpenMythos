@@ -114,3 +114,30 @@ def test_estimate_key_pure_vectors():
     # Deterministic, dependency-light sanity on the key estimator.
     cmaj = [10, 0, 4, 0, 6, 5, 0, 7, 0, 4, 0, 3]
     assert to_camelot(estimate_key(cmaj)) == to_camelot("C")
+
+
+def test_scan_mix_over_synth_audio(tmp_path):
+    # Build a 3-minute "mix" and a fake identifier that reports a different
+    # track for each third — scan_mix must slice, recognize, and dedup them.
+    from open_mythos.dj.identify import CallableIdentifier, scan_mix
+
+    mix = str(tmp_path / "mix.wav")
+    _synth_wav(mix, seconds=180.0, bpm=124, roots_hz=[220.0])
+
+    # Decode window offset from clip length is not available to the fake, so
+    # key on a shared counter: windows arrive in order at 60s hops.
+    calls = {"n": 0}
+
+    def fake(wav_bytes):
+        i = calls["n"]
+        calls["n"] += 1
+        track = i // 1  # one window per hop; 3 hops over 180s at hop=60
+        names = [("A", "One"), ("A", "One"), ("B", "Two")]
+        a, t = names[min(track, len(names) - 1)]
+        return {"artist": a, "title": t}
+
+    sl = scan_mix(mix, CallableIdentifier(fake), name="scan",
+                  segment_seconds=10.0, hop_seconds=60.0)
+    # Windows at 0, 60, 120 -> [One, One, Two] -> dedup -> [One, Two]
+    assert [t.title for t in sl.tracks] == ["One", "Two"]
+    assert sl.tracks[0].duration > 0

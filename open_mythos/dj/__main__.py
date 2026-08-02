@@ -85,6 +85,30 @@ def _cmd_render(args) -> int:
     return 0
 
 
+def _cmd_identify(args) -> int:
+    from .identify import build_identifier, scan_mix, setlist_to_dict
+
+    identifier = build_identifier(args.provider)
+
+    def _prog(offset, res):
+        mm, ss = divmod(int(offset), 60)
+        who = f"{res.get('artist','')} - {res.get('title','')}" if res else "(no match)"
+        print(f"  {mm:02d}:{ss:02d}  {who}")
+
+    setlist = scan_mix(
+        args.audio, identifier, name=args.name,
+        segment_seconds=args.segment, hop_seconds=args.hop,
+        delay=args.delay, on_progress=_prog,
+    )
+    print(f"\nIdentified {len(setlist.tracks)} distinct track(s).")
+    with open(args.out, "w", encoding="utf-8") as fh:
+        json.dump(setlist_to_dict(setlist), fh, indent=2)
+    print(f"Wrote setlist -> {args.out}\n"
+          f"Next: python -m open_mythos.dj learn {args.out} --name {args.name} "
+          f"--enrich musicbrainz")
+    return 0
+
+
 def _cmd_enrich(args) -> int:
     from .enrich import JsonCache, build_provider, enrich_tracks
 
@@ -193,6 +217,20 @@ def build_parser() -> argparse.ArgumentParser:
                     help="do not time-stretch tracks to a common tempo")
     pr.add_argument("--playlist", help="also write an M3U playlist here")
     pr.set_defaults(func=_cmd_render)
+
+    pi = sub.add_parser("identify",
+                        help="recognize tracks in a mix's audio -> setlist JSON")
+    pi.add_argument("audio", help="path to the mix audio file (you supply it)")
+    pi.add_argument("--provider", required=True, help="'audd:API_TOKEN'")
+    pi.add_argument("--out", required=True, help="write the setlist JSON here")
+    pi.add_argument("--name", default="scanned_mix", help="name for the setlist")
+    pi.add_argument("--segment", type=float, default=20.0,
+                    help="recognition clip length in seconds (default 20)")
+    pi.add_argument("--hop", type=float, default=60.0,
+                    help="seconds between clips sampled (default 60)")
+    pi.add_argument("--delay", type=float, default=1.0,
+                    help="seconds between API calls (default 1.0)")
+    pi.set_defaults(func=_cmd_identify)
 
     pe = sub.add_parser("enrich", help="fill missing bpm/key/energy metadata")
     pe.add_argument("source", help="folder of audio, CSV, or JSON list of tracks")
