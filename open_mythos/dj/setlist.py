@@ -184,6 +184,67 @@ def setlist_from_tracklist(
     return Setlist(name=name, tracks=tracks, transitions=transitions)
 
 
+def _parse_track_filename(basename: str) -> tuple[str, str]:
+    """From ``"01 01 Drake - Fancy.mp3"`` -> ``("Drake", "Fancy")`` (artist-first).
+
+    Strips the extension and any repeated leading index numbers, then splits on
+    the first ``" - "``. Falls back to (``""``, whole-name) when there's no dash.
+    """
+    import os
+
+    stem = os.path.splitext(basename)[0]
+    prev = None
+    while prev != stem:  # strip repeated leading "NN " index groups
+        prev = stem
+        stem = _INDEX_RE.sub("", stem).strip()
+    if " - " in stem:
+        artist, title = stem.split(" - ", 1)
+        return artist.strip(), title.strip()
+    return "", stem.strip()
+
+
+def setlist_from_folder(path: str, name: str, analyze_audio: bool = True) -> Setlist:
+    """Treat an ordered folder of audio files as a DJ's setlist.
+
+    A split mixtape (one file per track, numbered in play order) is itself a
+    setlist: the file order is the DJ's sequencing, and each file's tags /
+    filename give the artist and title. With ``analyze_audio`` and the
+    ``[audio]`` extra installed, each track is also analyzed for BPM / key /
+    energy — otherwise those are left for the enrichment step.
+
+    Args:
+        path: Folder of audio files (sorted by name = play order).
+        name: Name for the resulting setlist.
+        analyze_audio: If ``True``, read tags + run signal analysis per file.
+    """
+    import os
+
+    from .analysis import Track, analyze_file, normalize_energy
+
+    exts = (".mp3", ".wav", ".flac", ".aiff", ".aif", ".m4a", ".ogg")
+    files = sorted(f for f in os.listdir(path) if f.lower().endswith(exts))
+    tracks: list[Track] = []
+    for f in files:
+        full = os.path.join(path, f)
+        if analyze_audio:
+            tr = analyze_file(full)  # keeps duration/bpm/key/energy
+        else:
+            tr = Track(title=os.path.splitext(f)[0], path=full)
+        # Filenames on split mixtapes carry the clean "Artist - Title" (tags
+        # often hold the DJ as artist + a numbered title), so prefer them.
+        fn_artist, fn_title = _parse_track_filename(f)
+        if fn_artist:
+            tr.artist, tr.title = fn_artist, fn_title
+        elif not tr.artist:
+            tr.title = fn_title or tr.title
+        tracks.append(tr)
+
+    if analyze_audio:
+        normalize_energy(tracks)  # relative energy curve across the set
+    transitions = ["long_blend"] * (len(tracks) - 1) if len(tracks) > 1 else []
+    return Setlist(name=name, tracks=tracks, transitions=transitions)
+
+
 def setlist_from_json(path_or_text: str, name: str | None = None) -> Setlist:
     """Parse a JSON setlist.
 

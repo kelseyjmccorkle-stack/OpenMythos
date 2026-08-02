@@ -138,8 +138,11 @@ def _cmd_enrich(args) -> int:
 
 
 def _cmd_learn(args) -> int:
+    import os
+
     from .setlist import (
         learn_profile_from_setlists,
+        setlist_from_folder,
         setlist_from_json,
         setlist_from_text,
         setlist_from_tracklist,
@@ -149,7 +152,9 @@ def _cmd_learn(args) -> int:
     setlists = []
     for i, path in enumerate(args.setlists):
         nm = f"{args.name}_{i + 1}"
-        if path.lower().endswith(".json"):
+        if os.path.isdir(path):
+            setlists.append(setlist_from_folder(path, name=nm))
+        elif path.lower().endswith(".json"):
             setlists.append(setlist_from_json(path, name=nm))
         else:
             with open(path, encoding="utf-8") as fh:
@@ -244,7 +249,8 @@ def build_parser() -> argparse.ArgumentParser:
     pe.set_defaults(func=_cmd_enrich)
 
     pl = sub.add_parser("learn", help="learn a DJ profile from setlists")
-    pl.add_argument("setlists", nargs="+", help="setlist files (.txt or .json)")
+    pl.add_argument("setlists", nargs="+",
+                    help="setlist files (.txt/.json) or folders of ordered audio")
     pl.add_argument("--name", required=True, help="name for the learned profile")
     pl.add_argument("--out", help="write the learned profile JSON here")
     pl.add_argument("--corpus", help="write an RDT training corpus here")

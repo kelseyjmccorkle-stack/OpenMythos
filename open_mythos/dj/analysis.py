@@ -171,7 +171,9 @@ def _analyze_signal(path: str) -> dict | None:
         tempo_fn = librosa.beat.tempo
     tempo = float(np.atleast_1d(tempo_fn(y=y, sr=sr))[0])
     rms = float(np.mean(librosa.feature.rms(y=y)))
-    # Normalize RMS to a rough 0..1 energy (heuristic; tune per collection).
+    # Absolute RMS saturates on loud commercial masters, so it's a poor energy
+    # value on its own. Keep a rough per-file estimate but also expose the raw
+    # loudness so a set can be normalized relative to itself (normalize_energy).
     energy = float(min(1.0, rms * 8.0))
 
     chroma = librosa.feature.chroma_cens(y=y, sr=sr).mean(axis=1)
@@ -182,6 +184,7 @@ def _analyze_signal(path: str) -> dict | None:
         "bpm": tempo,
         "key": key_guess,
         "energy": energy,
+        "loudness": rms,
         "duration": float(librosa.get_duration(y=y, sr=sr)),
         "path": path,
     }
@@ -194,10 +197,32 @@ def analyze_file(path: str) -> Track:
     if signal:
         # Fill any gaps from tags with the signal estimate.
         merged = {**signal, **{k: v for k, v in (data or {}).items() if v}}
-        return tracks_from_dicts([merged])[0]
+        tr = tracks_from_dicts([merged])[0]
+        if signal.get("loudness") is not None:
+            tr.meta["loudness"] = signal["loudness"]
+        return tr
     if data:
         return tracks_from_dicts([data])[0]
     return Track(title=os.path.splitext(os.path.basename(path))[0], path=path)
+
+
+def normalize_energy(tracks: list[Track], lo: float = 0.15, hi: float = 1.0):
+    """Set each track's energy by min-max scaling raw loudness across the set.
+
+    Absolute loudness is collection-relative, so an energy *curve* only means
+    something when tracks are compared to each other. Tracks without a
+    ``meta['loudness']`` value are left untouched.
+    """
+    louds = [(t, t.meta.get("loudness")) for t in tracks]
+    vals = [v for _, v in louds if v is not None]
+    if len(vals) < 2:
+        return tracks
+    lo_v, hi_v = min(vals), max(vals)
+    span = (hi_v - lo_v) or 1.0
+    for t, v in louds:
+        if v is not None:
+            t.energy = round(lo + (hi - lo) * (v - lo_v) / span, 3)
+    return tracks
 
 
 def analyze_library(source) -> list[Track]:

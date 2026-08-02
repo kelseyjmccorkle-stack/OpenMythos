@@ -82,6 +82,7 @@ from open_mythos.dj.profile import (
 from open_mythos.dj.setlist import (
     Setlist,
     learn_profile_from_setlists,
+    setlist_from_folder,
     setlist_from_json,
     setlist_from_text,
     setlist_from_tracklist,
@@ -133,6 +134,7 @@ __all__ = [
     "Setlist",
     "setlist_from_text",
     "setlist_from_tracklist",
+    "setlist_from_folder",
     "setlist_from_json",
     "learn_profile_from_setlists",
     "setlists_to_corpus",

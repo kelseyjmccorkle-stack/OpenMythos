@@ -92,6 +92,39 @@ def test_tracklist_learns_pacing_from_timestamps():
     assert 60 < p.avg_track_seconds < 2000
 
 
+# -- folder ingestion (split mixtape) ---------------------------------------
+
+def test_setlist_from_folder_parses_names_and_order(tmp_path):
+    from open_mythos.dj.setlist import setlist_from_folder
+
+    # A split mixtape: doubled index prefix, "Artist - Title" in the name.
+    names = [
+        "01 01 Drake Feat. T.I. - Fancy.mp3",
+        "02 02 Usher - There Goes My Baby.mp3",
+        "03 03 Trey Songz - Flatline.mp3",
+    ]
+    for n in names:
+        (tmp_path / n).write_bytes(b"")  # empty; analyze_audio=False
+    sl = setlist_from_folder(str(tmp_path), name="djx", analyze_audio=False)
+    assert [t.title for t in sl.tracks] == ["Fancy", "There Goes My Baby", "Flatline"]
+    assert sl.tracks[0].artist == "Drake Feat. T.I."
+    assert len(sl.transitions) == 2
+
+
+def test_normalize_energy_spreads_across_set():
+    from open_mythos.dj.analysis import Track, normalize_energy
+
+    tracks = [
+        Track(title="a", meta={"loudness": 0.10}),
+        Track(title="b", meta={"loudness": 0.20}),
+        Track(title="c", meta={"loudness": 0.30}),
+    ]
+    normalize_energy(tracks, lo=0.15, hi=1.0)
+    assert tracks[0].energy == 0.15   # quietest -> floor
+    assert tracks[2].energy == 1.0    # loudest -> ceiling
+    assert 0.15 < tracks[1].energy < 1.0
+
+
 # -- key detection ----------------------------------------------------------
 
 def test_estimate_key_major_and_minor():
