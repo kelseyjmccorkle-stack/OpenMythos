@@ -3,9 +3,11 @@
 from open_mythos.dj.identify import (
     AudDIdentifier,
     CallableIdentifier,
+    ShazamIdentifier,
     assemble_setlist,
     build_identifier,
     parse_audd_result,
+    parse_shazam_result,
     setlist_to_dict,
 )
 
@@ -26,6 +28,33 @@ def test_audd_identifier_uses_post(monkeypatch):
         "status": "success", "result": {"artist": "A", "title": "B"}
     })
     assert ident.identify_clip(b"fakewav") == {"artist": "A", "title": "B"}
+
+
+# -- Shazam (no-key) parsing ------------------------------------------------
+
+def test_parse_shazam_success_and_no_match():
+    ok = {"track": {"title": "Runnin'", "subtitle": "Deetron"}}
+    assert parse_shazam_result(ok) == {"artist": "Deetron", "title": "Runnin'"}
+    assert parse_shazam_result({"matches": []}) is None   # no 'track' key
+    assert parse_shazam_result({}) is None
+
+
+def test_shazam_identifier_uses_recognize(monkeypatch):
+    ident = ShazamIdentifier()
+    monkeypatch.setattr(ident, "_recognize", lambda wav: {
+        "track": {"title": "T", "subtitle": "Ar"}
+    })
+    assert ident.identify_clip(b"fakewav") == {"artist": "Ar", "title": "T"}
+
+
+def test_shazam_identifier_handles_failure(monkeypatch):
+    ident = ShazamIdentifier()
+
+    def boom(wav):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(ident, "_recognize", boom)
+    assert ident.identify_clip(b"x") is None
 
 
 # -- assembly (dedup + timing) ----------------------------------------------
@@ -80,9 +109,10 @@ def test_setlist_to_dict_roundtrip_shape():
 
 def test_build_identifier_spec():
     assert isinstance(build_identifier("audd:TOKEN"), AudDIdentifier)
+    assert isinstance(build_identifier("shazam"), ShazamIdentifier)
     import pytest
 
     with pytest.raises(ValueError):
         build_identifier("audd")  # missing token
     with pytest.raises(ValueError):
-        build_identifier("shazam:x")  # unknown
+        build_identifier("bogus:x")  # unknown provider

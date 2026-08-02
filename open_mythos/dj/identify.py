@@ -112,6 +112,58 @@ def parse_audd_result(data: dict) -> dict | None:
     return {"artist": artist, "title": title}
 
 
+class ShazamIdentifier(AudioIdentifier):
+    """Recognize a clip via Shazam — **no API key required**.
+
+    Uses the third-party ``shazamio`` client, which talks to Shazam's endpoint
+    directly. It needs no signup or token and its algorithm is robust to the
+    tempo/EQ changes in a DJ mix. Trade-off: ``shazamio`` is *unofficial* (ToS
+    gray area) and may break if Shazam changes their protocol.
+
+        pip install "open-mythos[shazam]"   # installs shazamio
+
+    The async recognition call is isolated in :meth:`_recognize` so parsing is
+    unit-testable without network or the shazamio dependency.
+    """
+
+    def __init__(self, delay: float = 0.0):
+        self._delay = delay
+
+    def _recognize(self, wav_bytes: bytes) -> dict:
+        """Call shazamio and return its raw response dict. Overridden in tests."""
+        import asyncio
+
+        from shazamio import Shazam  # type: ignore
+
+        async def _go() -> dict:
+            shazam = Shazam()
+            recognize = getattr(shazam, "recognize", None) or shazam.recognize_song
+            return await recognize(wav_bytes)
+
+        return asyncio.run(_go())
+
+    def identify_clip(self, wav_bytes: bytes) -> dict | None:
+        try:
+            data = self._recognize(wav_bytes)
+        except Exception:
+            return None
+        return parse_shazam_result(data)
+
+
+def parse_shazam_result(data: dict) -> dict | None:
+    """Extract ``{artist, title}`` from a shazamio response, or ``None``."""
+    if not data:
+        return None
+    track = data.get("track")
+    if not track:  # no match -> empty 'matches', no 'track'
+        return None
+    title = (track.get("title") or "").strip()
+    artist = (track.get("subtitle") or "").strip()  # shazam: subtitle == artist
+    if not title:
+        return None
+    return {"artist": artist, "title": title}
+
+
 # --------------------------------------------------------------------------
 # Assembly (pure, offline-testable)
 # --------------------------------------------------------------------------
@@ -227,9 +279,14 @@ def scan_mix(
 
 
 def build_identifier(spec: str) -> AudioIdentifier:
-    """Build an identifier from a CLI spec: ``"audd:API_TOKEN"``."""
+    """Build an identifier from a CLI spec.
+
+    ``"shazam"`` (no key) | ``"audd:API_TOKEN"``.
+    """
     name, _, arg = spec.partition(":")
     name = name.lower()
+    if name == "shazam":
+        return ShazamIdentifier()
     if name == "audd":
         if not arg:
             raise ValueError("audd needs an API token: audd:TOKEN")

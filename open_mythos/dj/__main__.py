@@ -221,7 +221,8 @@ def build_parser() -> argparse.ArgumentParser:
     pi = sub.add_parser("identify",
                         help="recognize tracks in a mix's audio -> setlist JSON")
     pi.add_argument("audio", help="path to the mix audio file (you supply it)")
-    pi.add_argument("--provider", required=True, help="'audd:API_TOKEN'")
+    pi.add_argument("--provider", required=True,
+                    help="'shazam' (no key) | 'audd:API_TOKEN'")
     pi.add_argument("--out", required=True, help="write the setlist JSON here")
     pi.add_argument("--name", default="scanned_mix", help="name for the setlist")
     pi.add_argument("--segment", type=float, default=20.0,

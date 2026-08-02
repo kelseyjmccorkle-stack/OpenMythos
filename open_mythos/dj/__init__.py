@@ -52,6 +52,7 @@ from open_mythos.dj.identify import (
     AudDIdentifier,
     AudioIdentifier,
     CallableIdentifier,
+    ShazamIdentifier,
     assemble_setlist,
     build_identifier,
     scan_mix,
@@ -141,6 +142,7 @@ __all__ = [
     "build_identifier",
     "AudioIdentifier",
     "AudDIdentifier",
+    "ShazamIdentifier",
     "CallableIdentifier",
     "setlist_to_dict",
     # metadata enrichment
