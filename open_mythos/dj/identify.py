@@ -211,8 +211,44 @@ def assemble_setlist(
         rows.append(row)
 
     tracks = tracks_from_dicts(rows)
+    for tr, (offset, _) in zip(tracks, merged):
+        tr.meta["offset"] = offset  # position in the mix, for later audio analysis
     transitions = ["long_blend"] * (len(tracks) - 1) if len(tracks) > 1 else []
     return Setlist(name=name, tracks=tracks, transitions=transitions)
+
+
+def analyze_setlist_audio(setlist, audio_path: str, window: float = 30.0):
+    """Fill BPM / key / energy on a scanned setlist from the mix audio itself.
+
+    Recognition (Shazam/AudD) gives only artist + title. This analyzes a
+    ``window``-second slice of the mix at each track's stored ``meta['offset']``
+    to recover the harmonic and tempo signature, then normalizes energy across
+    the set. Needs the ``[audio]`` extra. Returns the same setlist, enriched.
+    """
+    import numpy as np  # noqa: F401
+    import soundfile as sf  # type: ignore
+
+    from .analysis import analyze_samples, normalize_energy
+    from .harmonic import to_camelot
+
+    info = sf.info(audio_path)
+    sr = int(info.samplerate)
+    total = float(info.duration)
+    for tr in setlist.tracks:
+        off = tr.meta.get("offset")
+        if off is None:
+            continue
+        start = int(off * sr)
+        stop = int(min(off + window, total) * sr)
+        y, _ = sf.read(audio_path, start=start, stop=stop, dtype="float32",
+                       always_2d=True)
+        y = y.mean(axis=1)
+        res = analyze_samples(y, sr)
+        tr.bpm = float(res["bpm"])
+        tr.key = to_camelot(res["key"]) or tr.key
+        tr.meta["loudness"] = res["loudness"]
+    normalize_energy(setlist.tracks)
+    return setlist
 
 
 # --------------------------------------------------------------------------

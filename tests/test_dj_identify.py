@@ -74,6 +74,14 @@ def test_assemble_dedups_consecutive_and_times_tracks():
     assert sl.transitions == ["long_blend"]
 
 
+def test_assemble_stores_offset_for_audio_analysis():
+    recs = [(60.0, {"artist": "A", "title": "One"}),
+            (180.0, {"artist": "B", "title": "Two"})]
+    sl = assemble_setlist(recs, name="m", total_duration=300.0)
+    assert sl.tracks[0].meta["offset"] == 60.0
+    assert sl.tracks[1].meta["offset"] == 180.0
+
+
 def test_assemble_drops_unrecognized_and_handles_empty():
     assert assemble_setlist([(0.0, None), (60.0, None)], name="m").tracks == []
     assert assemble_setlist([], name="m").tracks == []

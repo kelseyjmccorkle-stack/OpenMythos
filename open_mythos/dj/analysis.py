@@ -152,17 +152,15 @@ def estimate_key(chroma_mean) -> str:
     return f"{_PITCH_NAMES[tonic]} {mode}"
 
 
-def _analyze_signal(path: str) -> dict | None:
-    """Estimate bpm/key/energy from the waveform via librosa, if available."""
-    try:
-        import librosa  # type: ignore
-        import numpy as np  # type: ignore
-    except Exception:
-        return None
-    try:
-        y, sr = librosa.load(path, mono=True)
-    except Exception:
-        return None
+def analyze_samples(y, sr: int) -> dict:
+    """Estimate ``{bpm, key, energy, loudness}`` from a mono sample array.
+
+    Works on any audio window — a whole file or a segment sliced out of a
+    continuous mix — so it powers both file analysis and per-track analysis of
+    a scanned mix. Requires librosa.
+    """
+    import librosa  # type: ignore
+    import numpy as np  # type: ignore
 
     # tempo moved to librosa.feature.rhythm.tempo in 0.10; fall back for older.
     try:
@@ -171,23 +169,33 @@ def _analyze_signal(path: str) -> dict | None:
         tempo_fn = librosa.beat.tempo
     tempo = float(np.atleast_1d(tempo_fn(y=y, sr=sr))[0])
     rms = float(np.mean(librosa.feature.rms(y=y)))
-    # Absolute RMS saturates on loud commercial masters, so it's a poor energy
-    # value on its own. Keep a rough per-file estimate but also expose the raw
-    # loudness so a set can be normalized relative to itself (normalize_energy).
+    # Absolute RMS saturates on loud masters, so it's a poor energy value alone.
+    # Keep a rough estimate but also expose raw loudness so a set can be
+    # normalized relative to itself (normalize_energy).
     energy = float(min(1.0, rms * 8.0))
-
     chroma = librosa.feature.chroma_cens(y=y, sr=sr).mean(axis=1)
-    key_guess = estimate_key(chroma)
+    return {"bpm": tempo, "key": estimate_key(chroma), "energy": energy,
+            "loudness": rms}
 
-    return {
+
+def _analyze_signal(path: str) -> dict | None:
+    """Estimate bpm/key/energy from a whole file via librosa, if available."""
+    try:
+        import librosa  # type: ignore
+    except Exception:
+        return None
+    try:
+        y, sr = librosa.load(path, mono=True)
+    except Exception:
+        return None
+
+    out = analyze_samples(y, sr)
+    out.update({
         "title": os.path.splitext(os.path.basename(path))[0],
-        "bpm": tempo,
-        "key": key_guess,
-        "energy": energy,
-        "loudness": rms,
         "duration": float(librosa.get_duration(y=y, sr=sr)),
         "path": path,
-    }
+    })
+    return out
 
 
 def analyze_file(path: str) -> Track:

@@ -53,6 +53,7 @@ from open_mythos.dj.identify import (
     AudioIdentifier,
     CallableIdentifier,
     ShazamIdentifier,
+    analyze_setlist_audio,
     assemble_setlist,
     build_identifier,
     scan_mix,
@@ -140,6 +141,7 @@ __all__ = [
     "setlists_to_corpus",
     # audio recognition (mix -> tracklist)
     "scan_mix",
+    "analyze_setlist_audio",
     "assemble_setlist",
     "build_identifier",
     "AudioIdentifier",
