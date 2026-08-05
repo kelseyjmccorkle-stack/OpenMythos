@@ -98,6 +98,19 @@ def test_render_mix_produces_audio(tmp_path):
     assert float(np.max(np.abs(y))) > 0.0
 
 
+def test_render_mix_output_is_stereo(tmp_path):
+    paths = []
+    for i, bpm in enumerate((120, 124)):
+        p = str(tmp_path / f"st{i}.wav")
+        _synth_wav(p, seconds=4.0, bpm=bpm, roots_hz=[220.0 + 10 * i])
+        paths.append(p)
+    plan = _plan_from_paths(paths, (120, 124))
+    out = str(tmp_path / "stereo.wav")
+    render_mix(plan, out, sr=SR, target_bpm=122, beatmatch=True)
+    y, file_sr = sf.read(out, always_2d=True)
+    assert y.shape[1] == 2  # stereo output, even from mono synth sources
+
+
 def test_render_without_beatmatch(tmp_path):
     paths = []
     for i in range(2):
