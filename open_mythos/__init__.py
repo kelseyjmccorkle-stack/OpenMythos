@@ -15,7 +15,12 @@ from open_mythos.main import (
     loop_index_embedding,
     precompute_rope_freqs,
 )
-from open_mythos.tokenizer import MythosTokenizer
+from open_mythos.tokenizer import (
+    MythosTokenizer,
+    configure_vocab_size,
+    get_vocab_size,
+    load_tokenizer,
+)
 from open_mythos.variants import (
     mythos_1b,
     mythos_1t,
@@ -52,4 +57,5 @@ __all__ = [
     "load_tokenizer",
     "get_vocab_size",
     "MythosTokenizer",
+    "configure_vocab_size",
 ]
