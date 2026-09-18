@@ -4,6 +4,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 try:
     from flash_attn import flash_attn_func
@@ -83,6 +84,12 @@ class MythosConfig:
     max_output_tokens: int = 4096
     # Dropout (set 0.0 to disable; 0.1 is standard for pretraining)
     dropout: float = 0.0
+    # Gradient checkpointing for the recurrent loop. When True (training only),
+    # each loop iteration's transformer block is recomputed in the backward
+    # pass instead of storing its activations, trading extra compute for memory
+    # that would otherwise scale with the number of loop iterations. Off by
+    # default; has no effect at inference or when a KV cache is in use.
+    grad_checkpoint: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -912,7 +919,22 @@ class RecurrentBlock(nn.Module):
             h_loop = loop_index_embedding(h, t, self.loop_dim)
             combined = self.norm(h_loop + e)
             cache_key = f"recurrent_loop_{t}"
-            trans_out = self.block(combined, freqs_cis, mask, kv_cache, cache_key)
+            # Gradient checkpointing recomputes the block in backward to save
+            # activation memory across loop iterations. Only when training and
+            # cache-free: with a KV cache the block mutates it, and a recompute
+            # in backward would corrupt that state.
+            if self.cfg.grad_checkpoint and self.training and kv_cache is None:
+                trans_out = checkpoint(
+                    self.block,
+                    combined,
+                    freqs_cis,
+                    mask,
+                    None,
+                    cache_key,
+                    use_reentrant=False,
+                )
+            else:
+                trans_out = self.block(combined, freqs_cis, mask, kv_cache, cache_key)
             trans_out = trans_out + self.lora(trans_out, t)
             h = self.injection(h, e, trans_out)
 
