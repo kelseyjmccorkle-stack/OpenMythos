@@ -75,6 +75,10 @@ class MythosConfig:
     rope_theta: float = 500000.0
     # LoRA depth adaptation
     lora_rank: int = 16
+    # MoE load balancing (DeepSeek-V3 aux-loss-free): each training step nudges
+    # the router-selection bias toward uniform expert load. 0.0 disables it
+    # (bias stays fixed, reproducing the old unbalanced behavior).
+    moe_bias_update_speed: float = 1e-3
     # Maximum tokens to generate per forward pass
     max_output_tokens: int = 4096
     # Dropout (set 0.0 to disable; 0.1 is standard for pretraining)
@@ -485,10 +489,20 @@ class MoEFFN(nn.Module):
         self.n_experts = cfg.n_experts
         self.n_shared = cfg.n_shared_experts
         self.topk = cfg.n_experts_per_tok
+        self.bias_update_speed = cfg.moe_bias_update_speed
 
         self.router = nn.Linear(cfg.dim, cfg.n_experts, bias=False)
-        # load-balancing bias adjusted externally during training; not a gradient param
+        # Aux-loss-free load-balancing bias (DeepSeek-V3). Not a gradient param:
+        # it is nudged in-place each training step by forward() so the selection
+        # of which experts fire drifts toward uniform load, while the gating
+        # weights (from the unbiased softmax) are untouched. Persisted in the
+        # state_dict so the learned balance survives checkpointing.
         self.register_buffer("router_bias", torch.zeros(cfg.n_experts))
+        # Most recent per-expert load fraction (for logging/debugging only;
+        # not persisted).
+        self.register_buffer(
+            "expert_load", torch.zeros(cfg.n_experts), persistent=False
+        )
 
         self.routed_experts = nn.ModuleList(
             [Expert(cfg.dim, cfg.expert_dim) for _ in range(cfg.n_experts)]
@@ -510,31 +524,58 @@ class MoEFFN(nn.Module):
         """
         B, T, D = x.shape
         flat = x.view(B * T, D)
+        N = flat.shape[0]
 
         # Aux-loss-free load balancing (DeepSeek-V3): the bias shifts only the
         # selection of which experts fire so underused experts are picked more,
         # but the gating weights come from unbiased softmax scores so the bias
         # never shows up in the gradient.
-        logits = self.router(flat)  # (B*T, n_experts), unbiased
+        logits = self.router(flat)  # (N, n_experts), unbiased
         scores = F.softmax(logits, dim=-1)
-        _, topk_idx = (logits + self.router_bias).topk(self.topk, dim=-1)
+        _, topk_idx = (logits + self.router_bias).topk(self.topk, dim=-1)  # (N, K)
         topk_scores = scores.gather(-1, topk_idx)
         topk_scores = topk_scores / topk_scores.sum(dim=-1, keepdim=True)  # renorm
 
-        # routed expert dispatch (token-level scatter)
+        # Vectorized token-level dispatch. Flatten the (token, expert, weight)
+        # assignment slots so each routed expert runs exactly once over the
+        # tokens assigned to it (a single batched matmul), instead of the old
+        # topk x n_experts nested loop with a boolean mask per combination.
+        slot_expert = topk_idx.reshape(-1)  # (N*K,)  expert id per slot
+        slot_token = torch.arange(N, device=flat.device).repeat_interleave(
+            self.topk
+        )  # (N*K,)  source-token index per slot
+        slot_weight = topk_scores.reshape(-1)  # (N*K,)  gating weight per slot
+
         out = torch.zeros_like(flat)
-        for i in range(self.topk):
-            expert_ids = topk_idx[:, i]
-            token_scores = topk_scores[:, i].unsqueeze(-1)
-            for eid in range(self.n_experts):
-                mask = expert_ids == eid
-                if not mask.any():
-                    continue
-                out[mask] += token_scores[mask] * self.routed_experts[eid](flat[mask])
+        for eid in range(self.n_experts):
+            sel = slot_expert == eid
+            if not bool(sel.any()):
+                continue
+            tok = slot_token[sel]  # (n_sel,)
+            w = slot_weight[sel].unsqueeze(-1)  # (n_sel, 1)
+            contrib = self.routed_experts[eid](flat[tok]) * w
+            # out-of-place index_add keeps the autograd graph clean; duplicate
+            # token indices (a token may route to several experts) accumulate.
+            out = out.index_add(0, tok, contrib)
 
         # shared experts always fire for every token
         for shared in self.shared_experts:
             out = out + shared(flat)
+
+        # Aux-loss-free bias update (DeepSeek-V3, Sec. 4.1): after routing, nudge
+        # each expert's selection bias toward uniform load. Overloaded experts
+        # get a lower bias (picked less next step), underloaded a higher one.
+        # In-place, gradient-free, training-only; the gating weights above are
+        # unaffected so no auxiliary loss term is needed.
+        if self.training and self.bias_update_speed > 0:
+            with torch.no_grad():
+                counts = torch.bincount(
+                    slot_expert, minlength=self.n_experts
+                ).to(flat.dtype)
+                load = counts / counts.sum().clamp(min=1)  # fraction per expert
+                err = load - (1.0 / self.n_experts)  # +ve = overloaded
+                self.router_bias -= self.bias_update_speed * torch.sign(err)
+                self.expert_load = load
 
         return out.view(B, T, D)
 
