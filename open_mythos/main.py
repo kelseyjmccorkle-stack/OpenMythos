@@ -229,6 +229,10 @@ class GQAttention(nn.Module):
             Output tensor of shape (B, T, dim)
         """
         B, T, _ = x.shape
+        # Use exactly T rows of the RoPE table so callers may pass either a
+        # pre-sliced window (the full model does) or the full precomputed table
+        # (unit tests, ad-hoc use) — both are correct for the current q length.
+        freqs_cis = freqs_cis[:T]
         q = self.wq(x).view(B, T, self.n_heads, self.head_dim)
         k = self.wk(x).view(B, T, self.n_kv_heads, self.head_dim)
         v = self.wv(x).view(B, T, self.n_kv_heads, self.head_dim)
@@ -367,6 +371,8 @@ class MLAttention(nn.Module):
             Output tensor of shape (B, T, dim)
         """
         B, T, _ = x.shape
+        # See GQAttention: accept either a pre-sliced window or the full table.
+        freqs_cis = freqs_cis[:T]
 
         # Q
         c_q = self.q_norm(self.q_down(x))
@@ -722,7 +728,14 @@ class LTIInjection(nn.Module):
         # Compute in log space to avoid 0 * inf = NaN when log_dt → -∞, log_A → +∞.
         # dt * A_c = -exp(log_dt) * exp(log_A) = -exp(log_dt + log_A)
         # Clamp keeps the product finite in float32 for any gradient step size.
-        return torch.exp(-torch.exp((self.log_dt + self.log_A).clamp(-20, 20)))
+        A = torch.exp(-torch.exp((self.log_dt + self.log_A).clamp(-20, 20)))
+        # exp(-exp(x)) is mathematically in (0, 1), but for a very small inner
+        # exp(x) it rounds to exactly 1.0 in float32 — which would break the
+        # strict ρ(A) < 1 stability guarantee after a large gradient step.
+        # Cap it just below 1 (1e-6 > float32 ulp near 1.0) so the guarantee
+        # holds for any parameter values; A this close to 1 is near-identity
+        # anyway, so this does not change learned behavior.
+        return A.clamp(max=1.0 - 1e-6)
 
     def forward(
         self, h: torch.Tensor, e: torch.Tensor, transformer_out: torch.Tensor
